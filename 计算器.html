@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>IP地址转换器</title>
+    <style>
+        body {
+            font-family: "Microsoft Yahei", sans-serif;
+            max-width: 880px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+        input[type="number"] {
+            width: 70px;
+            padding: 5px;
+            font-size: 16px;
+        }
+        button {
+            padding: 7px 14px;
+            margin: 5px;
+            cursor: pointer;
+            font-size: 15px;
+        }
+        .center-text {
+            text-align: center;
+        }
+        #resultBox {
+            border: 1px solid #999;
+            padding: 15px;
+            min-height: 120px;
+            white-space: pre-line;
+            margin:10px 0;
+        }
+        .cidr-line{
+            margin:8px 0;
+        }
+    </style>
+</head>
+<body>
+    <hr>
+    <h1>IP地址转换器</h1>
+    <p>请输入IPv4地址</p>
+    <input class="ip" type="number" min="0" max="255"/>:
+    <input class="ip" type="number" min="0" max="255"/>:
+    <input class="ip" type="number" min="0" max="255"/>:
+    <input class="ip" type="number" min="0" max="255"/>
+    <button id="ipToMaskBtn">IP→默认掩码</button>
+
+    <div class="cidr-line">
+        <label>输入CIDR前缀(0~32)自动生成子网掩码：</label>
+        <input id="cidrInput" type="number" min="0" max="32" placeholder="例如24">
+        <button id="cidrToMaskBtn">前缀→子网掩码</button>
+    </div>
+
+    <hr>
+    <p>子网掩码</p>
+    <input class="mask" type="number" min="0" max="255"/>:
+    <input class="mask" type="number" min="0" max="255"/>:
+    <input class="mask" type="number" min="0" max="255"/>:
+    <input class="mask" type="number" min="0" max="255"/>
+
+    <p>可用主机数量</p>
+    <input id="hostCount" type="number" readonly>
+    <button id="helpBtn">点击了解</button>
+
+    <p class="center-text">输出结果</p>
+    <div id="resultBox"></div>
+
+    <h2>IP地址与子网掩码计算说明</h2>
+    <p>IPv4地址32位，CIDR前缀代表连续的网络位。<br>
+    例：/24 代表前24位为1，二进制 11111111.11111111.11111111.00000000 → 255.255.255.0<br>
+    /26 → 255.255.255.192
+    </p>
+
+    <h2>可用主机计算公式</h2>
+    <p>主机位数 = 32 − CIDR前缀长度<br>
+    可用主机数 = 2^(主机位数) − 2<br>
+    减2：去除网络地址、广播地址</p>
+
+<script>
+// =================工具函数=================
+// [a,b,c,d] → 32位无符号整数
+function ipToInt(a,b,c,d){
+    return (a << 24 | b << 16 | c << 8 | d) >>> 0;
+}
+// 32位整数 → [a,b,c,d]
+function intToIp(num){
+    num = num >>> 0;
+    let a = (num >>> 24) & 0xFF;
+    let b = (num >>> 16) & 0xFF;
+    let c = (num >>> 8) & 0xFF;
+    let d = num & 0xFF;z
+    return [a,b,c,d];
+}
+
+// CIDR前缀(0~32) → 子网掩码四段数组
+function prefixToMask(prefix){
+    if(prefix <0 || prefix>32) return null;
+    let binStr = "1".repeat(prefix).padEnd(32,"0");
+    let num = parseInt(binStr,2) >>> 0;
+    return intToIp(num);
+}
+
+// 子网掩码四段 → 获取CIDR前缀长度
+function maskToPrefix(a,b,c,d){
+    let num = ipToInt(a,b,c,d);
+    let bin = num.toString(2).padStart(32,"0");
+    let count=0;
+    for(let s of bin){
+        if(s==='1') count++;
+        else break;
+    }
+    return count;
+}
+
+// 根据IP地址类别获取默认子网掩码
+function getDefaultMaskByIp(a){
+    if(a >= 0 && a <= 127) return [255, 0, 0, 0];        // A类
+    if(a >= 128 && a <= 191) return [255, 255, 0, 0];    // B类
+    if(a >= 192 && a <= 223) return [255, 255, 255, 0]; // C类
+    if(a >= 224 && a <= 239) return [255, 255, 255, 0]; // D类(组播)
+    if(a >= 240 && a <= 255) return [255, 255, 255, 0]; // E类(保留)
+    return null;
+}
+
+// =================事件绑定=================
+const resultBox = document.getElementById('resultBox');
+const hostCountInput = document.getElementById('hostCount');
+
+// 0. IP地址 → 默认子网掩码按钮
+document.getElementById('ipToMaskBtn').addEventListener('click',()=>{
+    let ipInputs = document.querySelectorAll('.ip');
+    let ip = [];
+    for(let inp of ipInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("请先输入合法的IP地址(0~255)");
+            return;
+        }
+        ip.push(v);
+    }
+    let maskArr = getDefaultMaskByIp(ip[0]);
+    let ipClass = '';
+    if(ip[0] <= 127) ipClass = 'A类';
+    else if(ip[0] <= 191) ipClass = 'B类';
+    else if(ip[0] <= 223) ipClass = 'C类';
+    else if(ip[0] <= 239) ipClass = 'D类(组播)';
+    else ipClass = 'E类(保留)';
+    
+    let maskInputs = document.querySelectorAll('.mask');
+    maskInputs.forEach((input, idx) => {
+        input.value = maskArr[idx];
+    });
+    
+    let prefix = maskToPrefix(...maskArr);
+    document.getElementById('cidrInput').value = prefix;
+    hostCountInput.value = (2**(32-prefix) - 2) > 0 ? (2**(32-prefix) - 2) : 0;
+    
+    resultBox.innerText = 
+`IP地址：${ip.join('.')}
+IP类别：${ipClass}
+默认子网掩码：${maskArr.join('.')}
+CIDR前缀：/${prefix}
+可用主机数：${hostCountInput.value}`;
+});
+
+// 1. CIDR前缀 转 子网掩码按钮
+document.getElementById('cidrToMaskBtn').addEventListener('click',()=>{
+    let prefix = parseInt(document.getElementById('cidrInput').value);
+    if(isNaN(prefix) || prefix<0 || prefix>32){
+        alert("请输入0~32之间的CIDR前缀！");
+        return;
+    }
+    let maskArr = prefixToMask(prefix);
+    // 填充到掩码输入框
+    let maskInputs = document.querySelectorAll('.mask');
+    maskInputs.forEach((input,idx)=>{
+        input.value = maskArr[idx];
+    })
+    resultBox.innerText = `已生成前缀/${prefix}对应的子网掩码：${maskArr.join('.')}`;
+})
+
+// 2. 转换按钮（原有网段计算）
+document.getElementById('calcBtn').addEventListener('click',()=>{
+    let ipInputs = document.querySelectorAll('.ip');
+    let ip = [];
+    for(let inp of ipInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("IP四段必须是0~255数字");
+            return;
+        }
+        ip.push(v);
+    }
+
+    let maskInputs = document.querySelectorAll('.mask');
+    let mask = [];
+    for(let inp of maskInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("子网掩码四段必须是0~255数字");
+            return;
+        }
+        mask.push(v);
+    }
+
+    let ipNum = ipToInt(...ip);
+    let maskNum = ipToInt(...mask);
+    let netNum = ipNum & maskNum;
+    let wildcard = (~maskNum)>>>0;
+    let broadcastNum = netNum | wildcard;
+
+    let netIp = intToIp(netNum);
+    let broadcastIp = intToIp(broadcastNum);
+    let firstHost = intToIp(netNum+1);
+    let lastHost = intToIp(broadcastNum-1);
+
+    let prefix = maskToPrefix(...mask);
+    let hostBit = 32-prefix;
+    let total = 2**hostBit;
+    let usable = total - 2;
+
+    hostCountInput.value = usable>0 ? usable : 0;
+
+    resultBox.innerText =
+`CIDR前缀：/${prefix}
+网络地址：${netIp.join('.')}
+广播地址：${broadcastIp.join('.')}
+可用主机范围：${firstHost.join('.')} ~ ${lastHost.join('.')}
+总地址数量：${total}
+可用主机：${usable>0 ? usable : '无可分配主机'}`;
+})
+
+// 3. 子网掩码按钮
+document.getElementById('maskBtn').addEventListener('click',()=>{
+    let maskInputs = document.querySelectorAll('.mask');
+    let mask = [];
+    for(let inp of maskInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("请先输入合法的子网掩码(0~255)");
+            return;
+        }
+        mask.push(v);
+    }
+    let prefix = maskToPrefix(...mask);
+    resultBox.innerText = 
+`子网掩码：${mask.join('.')}
+CIDR前缀：/${prefix}
+通配符掩码：${intToIp((~ipToInt(...mask))>>>0).join('.')}`;
+});
+
+// 4. 网络地址按钮
+document.getElementById('netBtn').addEventListener('click',()=>{
+    let ipInputs = document.querySelectorAll('.ip');
+    let ip = [];
+    for(let inp of ipInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("请先输入合法的IP地址(0~255)");
+            return;
+        }
+        ip.push(v);
+    }
+    let maskInputs = document.querySelectorAll('.mask');
+    let mask = [];
+    for(let inp of maskInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("请先输入合法的子网掩码(0~255)");
+            return;
+        }
+        mask.push(v);
+    }
+    let ipNum = ipToInt(...ip);
+    let maskNum = ipToInt(...mask);
+    let netNum = ipNum & maskNum;
+    let netIp = intToIp(netNum);
+    let wildcard = (~maskNum)>>>0;
+    let broadcastNum = netNum | wildcard;
+    let broadcastIp = intToIp(broadcastNum);
+    resultBox.innerText = 
+`IP地址：${ip.join('.')}
+子网掩码：${mask.join('.')}
+网络地址：${netIp.join('.')}
+广播地址：${broadcastIp.join('.')}`;
+});
+
+// 5. 主机范围按钮
+document.getElementById('hostBtn').addEventListener('click',()=>{
+    let ipInputs = document.querySelectorAll('.ip');
+    let ip = [];
+    for(let inp of ipInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("请先输入合法的IP地址(0~255)");
+            return;
+        }
+        ip.push(v);
+    }
+    let maskInputs = document.querySelectorAll('.mask');
+    let mask = [];
+    for(let inp of maskInputs){
+        let v = parseInt(inp.value);
+        if(isNaN(v)||v<0||v>255){
+            alert("请先输入合法的子网掩码(0~255)");
+            return;
+        }
+        mask.push(v);
+    }
+    let ipNum = ipToInt(...ip);
+    let maskNum = ipToInt(...mask);
+    let netNum = ipNum & maskNum;
+    let wildcard = (~maskNum)>>>0;
+    let broadcastNum = netNum | wildcard;
+    let prefix = maskToPrefix(...mask);
+    let hostBit = 32 - prefix;
+    let total = 2**hostBit;
+    let usable = total - 2;
+    let firstHost = intToIp(netNum + 1);
+    let lastHost = intToIp(broadcastNum - 1);
+    if(prefix >= 31){
+        resultBox.innerText = 
+`当前前缀：/${prefix}
+可用主机数：${prefix === 32 ? 1 : 2}
+主机范围：${intToIp(netNum).join('.')} ~ ${intToIp(broadcastNum).join('.')}`;
+    } else {
+        resultBox.innerText = 
+`IP地址：${ip.join('.')}
+子网掩码：${mask.join('.')}
+CIDR前缀：/${prefix}
+第一个可用主机：${firstHost.join('.')}
+最后一个可用主机：${lastHost.join('.')}
+可用主机数量：${usable}
+总地址数：${total}`;
+    }
+});
+
+// 帮助弹窗
+document.getElementById('helpBtn').addEventListener('click',()=>{
+    alert(`【计算说明】
+1. 输入CIDR前缀点按钮，自动生成子网掩码
+2. 子网掩码必须是连续1，例如不能是255.255.0.255
+3. 可用主机 = 2^主机位数 - 2
+减去网络地址与广播地址
+网络地址:255:255:255:255
+广播地址:0:0:0:0`);
+})
+</script>
+</body>
+</html>
